@@ -9,11 +9,100 @@
 import Foundation
 
 struct CoinManager {
-    
-    let baseURL = "https://rest.coinapi.io/v1/exchangerate/BTC"
-    let apiKey = "YOUR_API_KEY_HERE"
+    enum APIEndpoint {
+        case currencies
+        case exchangeRates(fromId: Int, toId: Int)
+        
+        static var apiKey: String {
+            return "991d15b2a1a0f99a72d909a1622aa6eb"
+        }
+        static var baseURL: String {
+            return "https://bestchange.app/v2/"
+        }
+        
+        func path() -> String {
+            switch self {
+            case .currencies:
+                return APIEndpoint.baseURL + APIEndpoint.apiKey +  "/currencies/en"
+            case .exchangeRates(let fromId, let toId):
+                return APIEndpoint.baseURL + APIEndpoint.apiKey + "/rates/\(fromId)-\(toId)"
+            }
+        }
+    }
     
     let currencyArray = ["AUD", "BRL","CAD","CNY","EUR","GBP","HKD","IDR","ILS","INR","JPY","MXN","NOK","NZD","PLN","RON","RUB","SEK","SGD","USD","ZAR"]
-
     
+    var delegate: CoinManagerDelegate?
+    
+    func fetchCurrencyIDs(fromCode: String, toCode: String, completion: @escaping (_ fromID: Int, _ toID: Int) -> Void) {
+        let url = URL(string: APIEndpoint.currencies.path())!
+//        let url = URL(string: "https://bestchange.app/v2/991d15b2a1a0f99a72d909a1622aa6eb/currencies/en")!
+        
+        URLSession.shared.dataTask(with: url) { data, _, error in
+            guard let data = data else {
+                print("Ошибка загрузки валют: \(error?.localizedDescription ?? "нет данных")")
+                return
+            }
+
+            do {
+                let decoded = try JSONDecoder().decode(CoinData.self, from: data)
+                guard
+                    let from = decoded.currencies.first(where: { $0.code.hasSuffix(fromCode) }),
+                    let to = decoded.currencies.first(where: { $0.code.hasSuffix(fromCode) })
+                else {
+                    print("Не найдены валюты с кодами \(fromCode), \(toCode)")
+                    return
+                }
+                print(from.id, to.id)
+                completion(from.id, to.id)
+
+            } catch {
+                print("Ошибка парсинга JSON: \(error)")
+            }
+        }.resume()
+    }
+    
+    func fetchRates(fromID: Int, toID: Int) {
+        let pair = "\(fromID)-\(toID)"
+        let url = URL(string: APIEndpoint.exchangeRates(fromId: fromID, toId: toID).path())!
+
+        URLSession.shared.dataTask(with: url) { data, _, error in
+            guard let data = data else {
+                print("Ошибка загрузки курсов: \(error?.localizedDescription ?? "нет данных")")
+                return
+            }
+
+            do {
+                let decoded = try JSONDecoder().decode(RatesData.self, from: data)
+
+                if let rates = decoded.rates[pair] {
+                    let rate = rates
+                        .sorted { $0.rate < $1.rate }
+                        .first?.rate
+                    let coin = CoinModel(rate: rate ?? "0")
+                    print(rate ?? "0")
+                } else {
+                    print("Курс не найден по ключу \(pair)")
+                }
+
+            } catch {
+                print("Ошибка декодирования курсов: \(error)")
+            }
+        }.resume()
+    }
+    
+    func getCoinPrice(for toCode: String) {
+        fetchCurrencyIDs(fromCode: "BTC", toCode: toCode) { fromID, toID in
+            fetchRates(fromID: fromID, toID: toID)
+        }
+
+    }
+
+}
+
+
+
+protocol CoinManagerDelegate {
+    func didUpdateCoinRate(_ coinManager: CoinManager, coin: CoinModel)
+    func didFailWithError(error: Error)
 }
